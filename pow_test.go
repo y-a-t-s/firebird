@@ -11,6 +11,6 @@ func TestSolve(t *testing.T) {
 		t.Error(err)
 	}
 
-	hash, nonce := res.Result()
-	log.Printf("Hash: %x, Nonce: %d", hash, nonce)
+	hash, nonce, salt := res.Result()
+	log.Printf("Challenge: %s, Hash: %x, Nonce: %d", salt, hash, nonce)
 }

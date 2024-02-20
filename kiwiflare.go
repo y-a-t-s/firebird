@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"hash"
-	"log"
 	"math/rand"
 	"runtime"
 	"strconv"
@@ -17,7 +16,7 @@ import (
 
 // KiwiFlare instance. A variant of Hashcash.
 type kiwiFlare struct {
-	kfParams
+	*kfParams
 	workers []kfWorker
 	hashes  chan kfResult
 }
@@ -36,13 +35,37 @@ type kfWorker struct {
 type kfResult struct {
 	hash  []byte
 	nonce uint32
+	salt  []byte
 }
 
-func (kr kfResult) Result() ([]byte, uint32) {
-	return kr.hash, kr.nonce
+func (kr kfResult) Result() ([]byte, uint32, []byte) {
+	return kr.hash, kr.nonce, kr.salt
 }
 
-func getKFParams(root *html.Node) (kfParams, error) {
+func initKF(hc httpClient) (pow, error) {
+	page, err := hc.getChallengePage()
+	if err != nil {
+		panic(err)
+	}
+	root, err := getRootNode(page)
+	if err != nil {
+		panic(err)
+	}
+
+	kf := kiwiFlare{
+		&kfParams{},
+		make([]kfWorker, 1),
+		make(chan kfResult),
+	}
+	err = kf.getParams(root)
+	if err != nil {
+		panic(err)
+	}
+
+	return kf, nil
+}
+
+func (kf kiwiFlare) getParams(root *html.Node) error {
 	if root == nil {
 		panic("Challenge page reference is nil.")
 	}
@@ -50,26 +73,24 @@ func getKFParams(root *html.Node) (kfParams, error) {
 	parseAttr := func(av string) uint32 {
 		tmp, err := strconv.Atoi(av)
 		if err != nil {
-			log.Fatal(err)
+			panic(err)
 		}
 		return uint32(tmp)
 	}
-
-	kp := kfParams{}
 
 	attrs := root.Attr
 	for _, a := range attrs {
 		switch a.Key {
 		case "data-sssg-challenge":
-			kp.salt = a.Val
+			kf.salt = a.Val
 		case "data-sssg-difficulty":
-			kp.diff = parseAttr(a.Val)
+			kf.diff = parseAttr(a.Val)
 		case "data-sssg-patience":
-			kp.patience = parseAttr(a.Val)
+			kf.patience = parseAttr(a.Val)
 		}
 	}
 
-	return kp, nil
+	return nil
 }
 
 func (kf *kiwiFlare) generate() error {
@@ -98,7 +119,7 @@ func (kf *kiwiFlare) generate() error {
 	return nil
 }
 
-func (kf *kiwiFlare) Solve() (kfResult, error) {
+func (kf kiwiFlare) Solve() (result, error) {
 	duration, err := time.ParseDuration(fmt.Sprintf("%dm", kf.patience))
 	if err != nil {
 		// Fallback to common value.
@@ -126,6 +147,7 @@ func (kf *kiwiFlare) Solve() (kfResult, error) {
 			panic("KiwiFlare challenge timed out.")
 		case h := <-kf.hashes:
 			if bytes.HasPrefix(h.hash, zeros) {
+				h.salt = []byte(kf.salt)
 				return h, nil
 			}
 		}

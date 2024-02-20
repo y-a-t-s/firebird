@@ -6,36 +6,39 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	"golang.org/x/net/html"
 )
 
-type proxy func(ctx context.Context, network string, addr string) (net.Conn, error)
+type proxyDialer func(ctx context.Context, network string, addr string) (net.Conn, error)
 
-type pow struct {
+type pow interface {
+	getParams(root *html.Node) error
+	Solve() (result, error)
+}
+
+type httpClient struct {
 	http.Client
 	domain url.URL
 }
 
 type result interface {
-	Result() ([]byte, uint32)
+	Result() ([]byte, uint32, []byte)
 }
 
-type Solver interface {
-	Solve() (result, error)
-}
-
-func newPow(p proxy, host string) (pow, error) {
+func newHttpClient(proxy proxyDialer, host string) (httpClient, error) {
 	u, err := url.Parse(host)
 	if err != nil {
 		panic(err)
 	}
 
-	return pow{
+	return httpClient{
 		http.Client{
 			Transport: &http.Transport{
-				DialContext:        p, // May be nil. If so, uses default.
+				DialContext:        proxy, // May be nil. If so, uses default.
 				DisableCompression: false,
 				IdleConnTimeout:    time.Minute * 3,
 				MaxIdleConns:       4,
@@ -45,34 +48,36 @@ func newPow(p proxy, host string) (pow, error) {
 	}, nil
 }
 
-func Solve(p proxy, host string) (result, error) {
-	pw, err := newPow(p, host)
+func Solve(proxy proxyDialer, host string) (result, error) {
+	hc, err := newHttpClient(proxy, host)
 	if err != nil {
 		panic(err)
 	}
 
-	page, err := pw.getChallengePage()
-	if err != nil {
-		panic(err)
-	}
-	root, err := getRootNode(page)
-	if err != nil {
-		panic(err)
-	}
-
-	// TODO: Tor haproxy shit.
-
-	params, err := getKFParams(root)
+	// Supplied host may begin with protocol shit.
+	// Isolate the hostname and reassemble to parse to URL.
+	re := regexp.MustCompile(`(https?://)?([\w.]+)/?`)
+	hostname := re.FindStringSubmatch(host)[2]
+	u, err := url.Parse(fmt.Sprintf("https://%s", hostname))
 	if err != nil {
 		panic(err)
 	}
 
-	kf := kiwiFlare{
-		params,
-		make([]kfWorker, 1),
-		make(chan kfResult, 32),
+	tmp := strings.Split(u.Host, ".")
+	tld := tmp[len(tmp)-1]
+
+	var p pow
+	switch tld {
+	case "onion":
+		// TODO: haproxyShit()
+	default:
+		p, err = initKF(hc)
+		if err != nil {
+			panic(err)
+		}
 	}
-	res, err := kf.Solve()
+
+	res, err := p.Solve()
 	if err != nil {
 		panic(err)
 	}
@@ -92,7 +97,7 @@ func getRootNode(n *html.Node) (*html.Node, error) {
 	return getRootNode(n.NextSibling)
 }
 
-func (p *pow) getChallengePage() (*html.Node, error) {
+func (p *httpClient) getChallengePage() (*html.Node, error) {
 	resp, err := p.Get(fmt.Sprintf("https://%s", p.domain.Host))
 	if err != nil {
 		panic(err)
