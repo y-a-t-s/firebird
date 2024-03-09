@@ -17,14 +17,20 @@ import (
 // KiwiFlare instance. A variant of Hashcash.
 type kiwiFlare struct {
 	*kfParams
-	workers []kfWorker
 	hashes  chan kfResult
+	workers []kfWorker
 }
 
 type kfParams struct {
-	salt     string // Challenge salt from server.
-	diff     uint32 // Difficulty level.
-	patience uint32 // Time limit for answer in minutes.
+	challenge string // Challenge salt from server.
+	diff      uint32 // Difficulty level.
+	patience  uint32 // Time limit for answer in minutes.
+}
+
+type kfResult struct {
+	challenge []byte
+	hash      []byte
+	nonce     uint32
 }
 
 type kfWorker struct {
@@ -32,14 +38,8 @@ type kfWorker struct {
 	nonce  uint32    // Brute-forced nonce appended to salt.
 }
 
-type kfResult struct {
-	hash  []byte
-	nonce uint32
-	salt  []byte
-}
-
 func (kr kfResult) Result() ([]byte, uint32, []byte) {
-	return kr.hash, kr.nonce, kr.salt
+	return kr.challenge, kr.nonce, kr.hash
 }
 
 func initKF(hc httpClient) (pow, error) {
@@ -54,8 +54,8 @@ func initKF(hc httpClient) (pow, error) {
 
 	kf := kiwiFlare{
 		&kfParams{},
-		make([]kfWorker, 1),
 		make(chan kfResult),
+		make([]kfWorker, 1),
 	}
 	err = kf.getParams(root)
 	if err != nil {
@@ -82,7 +82,7 @@ func (kf kiwiFlare) getParams(root *html.Node) error {
 	for _, a := range attrs {
 		switch a.Key {
 		case "data-sssg-challenge":
-			kf.salt = a.Val
+			kf.challenge = a.Val
 		case "data-sssg-difficulty":
 			kf.diff = parseAttr(a.Val)
 		case "data-sssg-patience":
@@ -93,7 +93,7 @@ func (kf kiwiFlare) getParams(root *html.Node) error {
 	return nil
 }
 
-func (kf *kiwiFlare) generate() error {
+func (kf *kiwiFlare) generate(ctx context.Context) error {
 	if len(kf.workers) == 0 {
 		panic("No initialized thread workers found.")
 	}
@@ -101,7 +101,13 @@ func (kf *kiwiFlare) generate() error {
 	// Brute force nonces until hashes channel receives valid answer.
 	runWorker := func(w *kfWorker) {
 		for {
-			w.hasher.Write([]byte(fmt.Sprintf("%s%d", kf.salt, w.nonce)))
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			w.hasher.Write([]byte(fmt.Sprintf("%s%d", kf.challenge, w.nonce)))
 			kf.hashes <- kfResult{
 				hash:  w.hasher.Sum(nil),
 				nonce: w.nonce,
@@ -119,7 +125,7 @@ func (kf *kiwiFlare) generate() error {
 	return nil
 }
 
-func (kf kiwiFlare) Solve() (result, error) {
+func (kf kiwiFlare) solve() (result, error) {
 	duration, err := time.ParseDuration(fmt.Sprintf("%dm", kf.patience))
 	if err != nil {
 		// Fallback to common value.
@@ -132,7 +138,7 @@ func (kf kiwiFlare) Solve() (result, error) {
 	for i := range kf.workers {
 		kf.workers[i] = kfWorker{sha256.New(), rand.Uint32()}
 	}
-	go kf.generate()
+	go kf.generate(ctx)
 
 	// Initializes to all 0s. Used below for prefix checking.
 	// Given difficulty is measured in number of leading 0 bits. Here, we want # of bytes.
@@ -147,7 +153,8 @@ func (kf kiwiFlare) Solve() (result, error) {
 			panic("KiwiFlare challenge timed out.")
 		case h := <-kf.hashes:
 			if bytes.HasPrefix(h.hash, zeros) {
-				h.salt = []byte(kf.salt)
+				h.challenge = []byte(kf.challenge)
+				cancel()
 				return h, nil
 			}
 		}
