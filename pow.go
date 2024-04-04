@@ -1,6 +1,7 @@
-package main
+package firebird
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -21,20 +22,20 @@ type result interface {
 func Solve(proxy proxyDialer, host string) (result, error) {
 	hc, err := newHttpClient(proxy, host)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	// Supplied host may begin with protocol shit.
 	// Isolate the hostname and reassemble to parse to URL.
 	tmp := regexp.MustCompile(`(https?://)?([\w.]+)/?`).FindStringSubmatch(host)
 	if len(tmp) < 3 {
-		panic("Failed to parse host string.")
+		return nil, errors.New("Failed to parse host string.")
 	}
-	hn := tmp[2]
+	host = tmp[2]
 
-	u, err := url.Parse(fmt.Sprintf("https://%s", hn))
+	u, err := url.Parse(fmt.Sprintf("https://%s", host))
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	// TODO: Fix .net redirects.
 	hc.domain = *u
@@ -49,13 +50,13 @@ func Solve(proxy proxyDialer, host string) (result, error) {
 	default:
 		p, err = initKF(hc)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 	}
 
 	res, err := p.solve()
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	return res, nil
