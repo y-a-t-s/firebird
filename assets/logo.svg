@@ -4,9 +4,9 @@
    id="svg1"
    x="0px"
    y="0px"
-   width="473.80002"
-   height="520.5"
-   viewBox="0 0 473.80003 520.49998"
+   width="236.89998"
+   height="260.25"
+   viewBox="0 0 236.89999 260.24998"
    xml:space="preserve"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:svg="http://www.w3.org/2000/svg"><defs
@@ -18,7 +18,7 @@
 </style>
 <g
    id="g8"
-   transform="translate(-51.4,-105.4)">
+   transform="matrix(0.5,0,0,0.5,-25.7,-52.7)">
 	<g
    id="layer1">
 		<g

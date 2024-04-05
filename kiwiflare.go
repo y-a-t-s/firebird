@@ -125,7 +125,7 @@ func (kf *kiwiFlare) generate(ctx context.Context) error {
 	return nil
 }
 
-func (kf kiwiFlare) solve() (result, error) {
+func (kf kiwiFlare) solve() (Solution, error) {
 	duration, err := time.ParseDuration(fmt.Sprintf("%dm", kf.patience))
 	if err != nil {
 		// Fallback to common value.
