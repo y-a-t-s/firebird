@@ -12,14 +12,15 @@ import (
 
 type pow interface {
 	getParams(root *html.Node) error
-	solve() (result, error)
+	solve() (Solution, error)
 }
 
-type result interface {
+// PoW challenge solution.
+type Solution interface {
 	Result() ([]byte, uint32, []byte)
 }
 
-func Solve(proxy proxyDialer, host string) (result, error) {
+func Solve(proxy proxyDialer, host string) (Solution, error) {
 	hc, err := newHttpClient(proxy, host)
 	if err != nil {
 		return nil, err
