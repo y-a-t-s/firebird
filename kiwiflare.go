@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"hash"
 	"math/rand"
@@ -17,7 +18,7 @@ import (
 // KiwiFlare instance. A variant of Hashcash.
 type kiwiFlare struct {
 	*kfParams
-	hashes  chan kfResult
+	hashes  chan kfSolution
 	workers []kfWorker
 }
 
@@ -27,7 +28,7 @@ type kfParams struct {
 	patience  uint32 // Time limit for answer in minutes.
 }
 
-type kfResult struct {
+type kfSolution struct {
 	challenge []byte
 	hash      []byte
 	nonce     uint32
@@ -38,28 +39,32 @@ type kfWorker struct {
 	nonce  uint32    // Brute-forced nonce appended to salt.
 }
 
-func (kr kfResult) Result() ([]byte, uint32, []byte) {
-	return kr.challenge, kr.nonce, kr.hash
+func (s kfSolution) QueryStr() string {
+	return fmt.Sprintf("a=%s&b=%d", s.challenge, s.nonce)
+}
+
+func (s kfSolution) Solution() ([]byte, uint32, []byte) {
+	return s.challenge, s.nonce, s.hash
 }
 
 func initKF(hc httpClient) (pow, error) {
 	page, err := hc.getChallengePage()
 	if err != nil {
-		panic(err)
+		return kiwiFlare{}, err
 	}
 	root, err := getRootNode(page)
 	if err != nil {
-		panic(err)
+		return kiwiFlare{}, err
 	}
 
 	kf := kiwiFlare{
 		&kfParams{},
-		make(chan kfResult),
+		make(chan kfSolution),
 		make([]kfWorker, 1),
 	}
 	err = kf.getParams(root)
 	if err != nil {
-		panic(err)
+		return kiwiFlare{}, err
 	}
 
 	return kf, nil
@@ -67,15 +72,15 @@ func initKF(hc httpClient) (pow, error) {
 
 func (kf kiwiFlare) getParams(root *html.Node) error {
 	if root == nil {
-		panic("Challenge page reference is nil.")
+		return errors.New("Challenge page reference is nil.")
 	}
 
-	parseAttr := func(av string) uint32 {
+	parseAttr := func(av string) (uint32, error) {
 		tmp, err := strconv.Atoi(av)
 		if err != nil {
-			panic(err)
+			return 0, err
 		}
-		return uint32(tmp)
+		return uint32(tmp), nil
 	}
 
 	attrs := root.Attr
@@ -84,9 +89,17 @@ func (kf kiwiFlare) getParams(root *html.Node) error {
 		case "data-sssg-challenge":
 			kf.challenge = a.Val
 		case "data-sssg-difficulty":
-			kf.diff = parseAttr(a.Val)
+			diff, err := parseAttr(a.Val)
+			if err != nil {
+				return err
+			}
+			kf.diff = diff
 		case "data-sssg-patience":
-			kf.patience = parseAttr(a.Val)
+			patience, err := parseAttr(a.Val)
+			if err != nil {
+				return err
+			}
+			kf.patience = patience
 		}
 	}
 
@@ -95,7 +108,7 @@ func (kf kiwiFlare) getParams(root *html.Node) error {
 
 func (kf *kiwiFlare) generate(ctx context.Context) error {
 	if len(kf.workers) == 0 {
-		panic("No initialized thread workers found.")
+		errors.New("No initialized thread workers found.")
 	}
 
 	// Brute force nonces until hashes channel receives valid answer.
@@ -108,7 +121,7 @@ func (kf *kiwiFlare) generate(ctx context.Context) error {
 			}
 
 			w.hasher.Write([]byte(fmt.Sprintf("%s%d", kf.challenge, w.nonce)))
-			kf.hashes <- kfResult{
+			kf.hashes <- kfSolution{
 				hash:  w.hasher.Sum(nil),
 				nonce: w.nonce,
 			}
@@ -150,7 +163,7 @@ func (kf kiwiFlare) solve() (Solution, error) {
 		select {
 		// Return nil result if timeout has expired.
 		case <-ctx.Done():
-			panic("KiwiFlare challenge timed out.")
+			return kfSolution{}, errors.New("KiwiFlare challenge timed out.")
 		case h := <-kf.hashes:
 			if bytes.HasPrefix(h.hash, zeros) {
 				h.challenge = []byte(kf.challenge)

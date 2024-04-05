@@ -17,7 +17,8 @@ type pow interface {
 
 // PoW challenge solution.
 type Solution interface {
-	Result() ([]byte, uint32, []byte)
+	QueryStr() string
+	Solution() ([]byte, uint32, []byte)
 }
 
 func Solve(proxy proxyDialer, host string) (Solution, error) {

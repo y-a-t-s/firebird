@@ -2,7 +2,7 @@ package firebird
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,7 +22,7 @@ type proxyDialer func(ctx context.Context, network string, addr string) (net.Con
 func newHttpClient(proxy proxyDialer, host string) (httpClient, error) {
 	u, err := url.Parse(host)
 	if err != nil {
-		panic(err)
+		return httpClient{}, err
 	}
 
 	return httpClient{
@@ -40,7 +40,7 @@ func newHttpClient(proxy proxyDialer, host string) (httpClient, error) {
 
 func getRootNode(n *html.Node) (*html.Node, error) {
 	if n == nil {
-		panic("Failed to find <html> tag in document.")
+		return nil, errors.New("Failed to find <html> tag in document.")
 	}
 
 	if n.Type == html.ElementNode && n.Data == "html" {
@@ -51,21 +51,21 @@ func getRootNode(n *html.Node) (*html.Node, error) {
 }
 
 func (p *httpClient) getChallengePage() (*html.Node, error) {
-	resp, err := p.Get(fmt.Sprintf("https://%s", p.domain.Host))
+	resp, err := p.Get(p.domain.String())
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	ht, err := html.Parse(resp.Body)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	if ht.Type == html.DocumentNode {
 		rn, err := getRootNode(ht.FirstChild)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 		ht = rn
 	}
