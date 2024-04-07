@@ -11,15 +11,14 @@ import (
 	"golang.org/x/net/html"
 )
 
+type ContextDialer func(ctx context.Context, network, address string) (net.Conn, error)
+
 type httpClient struct {
 	http.Client
 	domain url.URL
 }
 
-// For Tor or other proxy stuff.
-type proxyDialer func(ctx context.Context, network string, addr string) (net.Conn, error)
-
-func newHttpClient(proxy proxyDialer, host string) (httpClient, error) {
+func newHttpClient(proxy ContextDialer, host string) (httpClient, error) {
 	u, err := url.Parse(host)
 	if err != nil {
 		return httpClient{}, err
@@ -39,11 +38,10 @@ func newHttpClient(proxy proxyDialer, host string) (httpClient, error) {
 }
 
 func getRootNode(n *html.Node) (*html.Node, error) {
-	if n == nil {
+	switch {
+	case n == nil:
 		return nil, errors.New("Failed to find <html> tag in document.")
-	}
-
-	if n.Type == html.ElementNode && n.Data == "html" {
+	case n.Type == html.ElementNode && n.Data == "html":
 		return n, nil
 	}
 

@@ -21,7 +21,10 @@ type Solution interface {
 	Solution() ([]byte, uint32, []byte)
 }
 
-func Solve(proxy proxyDialer, host string) (Solution, error) {
+// Request and solve a KiwiFlare challenge.
+// The request for the challenge may be routed through a proxy context.
+// The site's domain is not consistent, so it must be provided manually.
+func Solve(proxy ContextDialer, host string) (Solution, error) {
 	hc, err := newHttpClient(proxy, host)
 	if err != nil {
 		return nil, err
