@@ -13,13 +13,6 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-const HOST string = "https://kiwifarms.st"
-
-type auth struct {
-	Auth   string
-	Domain string
-}
-
 func parseTags(r io.Reader) (Challenge, error) {
 	parseAttr := func(v string) (uint32, error) {
 		tmp, err := strconv.Atoi(v)
@@ -63,8 +56,8 @@ func parseTags(r io.Reader) (Challenge, error) {
 	return c, nil
 }
 
-func NewChallenge(hc http.Client) (c Challenge, err error) {
-	resp, err := hc.Get(HOST)
+func NewChallenge(hc http.Client, host string) (c Challenge, err error) {
+	resp, err := hc.Get(host)
 	if err != nil {
 		return c, err
 	}
@@ -79,8 +72,8 @@ func NewChallenge(hc http.Client) (c Challenge, err error) {
 	return c, err
 }
 
-func Submit(hc http.Client, s Solution) (string, error) {
-	resp, err := hc.PostForm(HOST+"/.sssg/api/answer", url.Values{
+func Submit(hc http.Client, host string, s Solution) (string, error) {
+	resp, err := hc.PostForm(host+"/.sssg/api/answer", url.Values{
 		"a": []string{s.Salt},
 		"b": []string{fmt.Sprint(s.Nonce)},
 	})
@@ -92,6 +85,11 @@ func Submit(hc http.Client, s Solution) (string, error) {
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
+	}
+
+	type auth struct {
+		Auth   string
+		Domain string
 	}
 	a := auth{}
 	err = json.Unmarshal(b, &a)
