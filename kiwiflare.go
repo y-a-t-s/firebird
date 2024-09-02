@@ -1,10 +1,8 @@
 package firebird
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"hash"
 	"math/rand"
@@ -29,19 +27,56 @@ type worker struct {
 	nonce  uint32    // Brute-forced nonce appended to salt.
 }
 
-func Solve(c Challenge) (Solution, error) {
+// Given difficulty is measured in number of leading 0 bits.
+func checkZeros(diff uint32, hash []byte) bool {
+	rem := diff % 8
+	nbytes := (diff - rem) / 8
+
+	switch lh := uint32(len(hash)); {
+	case lh < nbytes, rem > 0 && lh < nbytes+1:
+		return false
+	}
+
+	for i := uint32(0); i < nbytes; i++ {
+		b := hash[i]
+		if b != 0x0 {
+			return false
+		}
+	}
+	if rem == 0 {
+		return true
+	}
+
+	// Construct mask to check remaining bits.
+	mask := uint8(0)
+	for i := uint32(0); i < rem; i++ {
+		mask <<= 1
+		mask += 1
+	}
+	// Shift 1s we just added to the LHS of the octet.
+	mask <<= 8 - rem
+
+	if hash[nbytes]&mask == 0x0 {
+		return true
+	}
+
+	return false
+}
+
+// Solve Challenge c. Returns Solution that can be submitted.
+func Solve(ctx context.Context, c Challenge) (Solution, error) {
 	duration, err := time.ParseDuration(fmt.Sprintf("%dm", c.Patience))
 	if err != nil {
 		// Fallback to common value.
 		duration = time.Minute * 3
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), duration)
+	ctx, cancel := context.WithTimeout(ctx, duration)
 	defer cancel()
 
 	threads := runtime.NumCPU()
 
-	hashes := make(chan Solution, threads/2)
+	hashes := make(chan Solution, threads)
 
 	// Brute force nonces until a valid solution is found.
 	runWorker := func(w *worker) {
@@ -67,19 +102,13 @@ func Solve(c Challenge) (Solution, error) {
 		go runWorker(&worker{sha256.New(), rand.Uint32()})
 	}
 
-	// Initializes to all 0s. Used below for prefix checking.
-	// Given difficulty is measured in number of leading 0 bits. Here, we want # of bytes.
-	zeros := make([]byte, c.Diff/8)
-	// TODO: Compare at bit level for technical correctness.
-
 	// Loop until answer has been found.
 	for {
 		select {
-		// Return nil result if timeout has expired.
 		case <-ctx.Done():
-			return Solution{}, errors.New("KiwiFlare challenge timed out.")
+			return Solution{}, ctx.Err()
 		case h := <-hashes:
-			if bytes.HasPrefix(h.Hash, zeros) {
+			if checkZeros(c.Diff, h.Hash) {
 				h.Salt = c.Salt
 				return h, nil
 			}
