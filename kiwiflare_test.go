@@ -9,7 +9,7 @@ import (
 )
 
 func TestSubmit(t *testing.T) {
-	const HOST = "kiwifarms.st"
+	const HOST = "kiwifarms.net"
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -29,7 +29,7 @@ func TestSubmit(t *testing.T) {
 	}
 	log.Printf("Solution hash: %x, nonce: %d\n", s.Hash, s.Nonce)
 
-	a, err := Submit(hc, HOST, s)
+	a, err := Submit(hc, s)
 	if err != nil {
 		t.Error(err)
 	}

@@ -9,29 +9,31 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
 
-func splitProtocol(addr string) (proto string, host string, err error) {
-	// FindStringSubmatch is used to capture the groups.
-	// Index 0 is the full matching string with all groups.
-	// The rest are numbered by the order of the opening parens.
-	// Here, we want the last 2 groups (indexes 1 and 2, requiring length 3).
-	tmp := regexp.MustCompile(`^([\w-]+://)?([^/]+)`).FindStringSubmatch(addr)
-	// At the very least, we need the hostname part (index 2).
-	if len(tmp) < 3 || tmp[2] == "" {
-		err = errors.New("Failed to parse address: " + addr)
-		return
+var ErrParseFailed = errors.New("Failed to parse challenge from HTML data tags.")
+
+func parseHost(addr string) (*url.URL, error) {
+	// Guess https as protocol if one wasn't provided and hope it parses.
+	if !strings.Contains(addr, "://") {
+		addr = "https://" + addr
 	}
 
-	proto = tmp[1]
-	host = tmp[2]
-	return
+	u, err := url.Parse(addr)
+	if err != nil {
+		return nil, err
+	}
+	u.Path = ""
+	u.RawPath = ""
+
+	return u, nil
 }
 
-func parseTags(r io.Reader) (c Challenge, err error) {
+func parseTags(r io.Reader, c *Challenge) error {
 	parseAttr := func(v string) (uint32, error) {
 		tmp, err := strconv.Atoi(v)
 		if err != nil {
@@ -52,13 +54,13 @@ func parseTags(r io.Reader) (c Challenge, err error) {
 				case "data-sssg-difficulty":
 					diff, err := parseAttr(a.Val)
 					if err != nil {
-						return c, err
+						return err
 					}
 					c.Diff = diff
 				case "data-sssg-patience":
 					pat, err := parseAttr(a.Val)
 					if err != nil {
-						return c, err
+						return err
 					}
 					c.Patience = pat
 				}
@@ -67,45 +69,54 @@ func parseTags(r io.Reader) (c Challenge, err error) {
 	}
 
 	if c.Salt == "" {
-		err = errors.New("Failed to parse challenge from data tags.")
+		return ErrParseFailed
+	}
+
+	return nil
+}
+
+func NewChallenge(hc http.Client, host string) (c Challenge, err error) {
+	u, err := parseHost(host)
+	if err != nil {
+		return
+	}
+	c.host = u
+
+	hostRE := regexp.MustCompile(`^kiwifarms`)
+	// Update host url in case we get redirected across domains.
+	hc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		rh := req.URL.Host
+		if rh != u.Host && hostRE.MatchString(rh) {
+			u.Host = rh
+		}
+
+		return nil
+	}
+
+	resp, err := hc.Get(u.String())
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	// Check for 203 status
+	if resp.StatusCode != 203 {
+		err = errors.New("No redirect to challenge page.")
+		return
+	}
+
+	// Kept separate from the return because of the defer.
+	err = parseTags(resp.Body, &c)
+	if err != nil {
 		return
 	}
 
 	return
 }
 
-func NewChallenge(hc http.Client, host string) (Challenge, error) {
-	_, host, err := splitProtocol(host)
-	if err != nil {
-		return Challenge{}, err
-	}
-
-	resp, err := hc.Get("https://" + host)
-	if err != nil {
-		return Challenge{}, err
-	}
-	defer resp.Body.Close()
-
-	// Check for 203 status
-	if resp.StatusCode != 203 {
-		return Challenge{}, errors.New("No redirect to challenge page.")
-	}
-
-	c, err := parseTags(resp.Body)
-	if err != nil {
-		return Challenge{}, err
-	}
-
-	return c, nil
-}
-
-func Submit(hc http.Client, host string, s Solution) (string, error) {
-	_, host, err := splitProtocol(host)
-	if err != nil {
-		return "", err
-	}
-
-	resp, err := hc.PostForm("https://"+host+"/.sssg/api/answer", url.Values{
+func Submit(hc http.Client, s Solution) (string, error) {
+	pu := fmt.Sprintf("%s://%s/.sssg/api/answer", s.host.Scheme, s.host.Hostname())
+	resp, err := hc.PostForm(pu, url.Values{
 		"a": []string{s.Salt},
 		"b": []string{fmt.Sprint(s.Nonce)},
 	})
