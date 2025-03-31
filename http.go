@@ -15,7 +15,16 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-var ErrParseFailed = errors.New("Failed to parse challenge from HTML data tags.")
+// Various errors.
+var (
+	ErrNoRedirect  = errors.New("No redirect to challenge page.")
+	ErrParseFailed = errors.New("Failed to parse challenge from HTML data tags.")
+)
+
+type auth struct {
+	Auth   string
+	Domain string
+}
 
 func parseHost(addr string) (*url.URL, error) {
 	// Guess https as protocol if one wasn't provided and hope it parses.
@@ -27,21 +36,21 @@ func parseHost(addr string) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	u.Path = ""
-	u.RawPath = ""
 
 	return u, nil
 }
 
-func parseTags(r io.Reader, c *Challenge) error {
-	parseAttr := func(v string) (uint32, error) {
-		tmp, err := strconv.Atoi(v)
-		if err != nil {
-			return 0, err
-		}
-
-		return uint32(tmp), nil
+func parseAttr(v string) (uint32, error) {
+	tmp, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, err
 	}
+
+	return uint32(tmp), nil
+}
+
+func parseTags(r io.Reader) (Challenge, error) {
+	c := Challenge{}
 
 	z := html.NewTokenizer(r)
 	for i := z.Next(); i != html.ErrorToken; i = z.Next() {
@@ -54,13 +63,13 @@ func parseTags(r io.Reader, c *Challenge) error {
 				case "data-sssg-difficulty":
 					diff, err := parseAttr(a.Val)
 					if err != nil {
-						return err
+						return Challenge{}, ErrParseFailed
 					}
 					c.Diff = diff
 				case "data-sssg-patience":
 					pat, err := parseAttr(a.Val)
 					if err != nil {
-						return err
+						return Challenge{}, ErrParseFailed
 					}
 					c.Patience = pat
 				}
@@ -69,18 +78,17 @@ func parseTags(r io.Reader, c *Challenge) error {
 	}
 
 	if c.Salt == "" {
-		return ErrParseFailed
+		return Challenge{}, ErrParseFailed
 	}
 
-	return nil
+	return c, nil
 }
 
-func NewChallenge(hc http.Client, host string) (c Challenge, err error) {
+func NewChallenge(hc http.Client, host string) (Challenge, error) {
 	u, err := parseHost(host)
 	if err != nil {
-		return
+		return Challenge{}, err
 	}
-	c.host = u
 
 	hostRE := regexp.MustCompile(`^kiwifarms`)
 	// Update host url in case we get redirected across domains.
@@ -95,48 +103,58 @@ func NewChallenge(hc http.Client, host string) (c Challenge, err error) {
 
 	resp, err := hc.Get(u.String())
 	if err != nil {
-		return
+		return Challenge{}, err
 	}
 	defer resp.Body.Close()
 
 	// Check for 203 status
 	if resp.StatusCode != 203 {
-		err = errors.New("No redirect to challenge page.")
-		return
+		return Challenge{}, ErrNoRedirect
 	}
 
 	// Kept separate from the return because of the defer.
-	err = parseTags(resp.Body, &c)
+	c, err := parseTags(resp.Body)
 	if err != nil {
-		return
+		return Challenge{}, err
 	}
+	c.host = u
 
-	return
+	return c, nil
 }
 
-func Submit(hc http.Client, s Solution) (string, error) {
-	pu := fmt.Sprintf("%s://%s/.sssg/api/answer", s.host.Scheme, s.host.Hostname())
-	resp, err := hc.PostForm(pu, url.Values{
+func postSolution(hc http.Client, s Solution) (*http.Response, error) {
+	// Ensure the POST url parses properly before passing the string.
+	u, err := url.Parse(fmt.Sprintf("%s://%s/.sssg/api/answer", s.host.Scheme, s.host.Hostname()))
+	if err != nil {
+		return nil, err
+	}
+
+	return hc.PostForm(u.String(), url.Values{
 		"a": []string{s.Salt},
 		"b": []string{fmt.Sprint(s.Nonce)},
 	})
+}
+
+func parseAuthToken(r io.Reader) (auth, error) {
+	var a auth
+
+	jd := json.NewDecoder(r)
+	err := jd.Decode(&a)
+	if err != nil {
+		return auth{}, err
+	}
+
+	return a, nil
+}
+
+func Submit(hc http.Client, s Solution) (string, error) {
+	resp, err := postSolution(hc, s)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	type auth struct {
-		Auth   string
-		Domain string
-	}
-
-	a := auth{}
-	err = json.Unmarshal(b, &a)
+	a, err := parseAuthToken(resp.Body)
 	if err != nil {
 		return "", err
 	}

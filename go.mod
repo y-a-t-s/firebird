@@ -1,6 +1,6 @@
 module github.com/y-a-t-s/firebird
 
-go 1.23.0
+go 1.24.1
 
 require (
 	github.com/minio/sha256-simd v1.0.1

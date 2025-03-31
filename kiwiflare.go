@@ -28,27 +28,32 @@ type Solution struct {
 // Given difficulty is measured in number of leading 0 bits.
 func checkZeros(diff uint32, hash []byte) bool {
 	var (
-		rem    = diff % 8
-		nbytes = (diff - rem) / 8
+		rem    = diff % 8         // Remainder after dividing diff (given in bits) to bytes.
+		nbytes = (diff - rem) / 8 // Amount of 0x0 bytes we can divide difficulty bits into.
 
-		i    uint32 // Loop counter. Defined up here to save space.
-		mask uint8  // Mask to check remaining bits.
+		mask uint8 // Mask to check remaining bits.
 	)
 
-	if lh := uint32(len(hash)); lh < nbytes || (rem > 0 && lh < nbytes+1) {
+	lh := uint32(len(hash))
+	// Check bounds for the loops found below.
+	if lh < nbytes || (rem > 0 && lh < nbytes+1) {
 		return false
 	}
 
-	for i = 0; i < nbytes; i++ {
+	// First, we count the number of leading 0x0 bytes.
+	for i := range nbytes {
 		if b := hash[i]; b != 0x0 {
 			return false
 		}
 	}
+	// If we don't have any more bits to check, return.
 	if rem == 0 {
 		return true
 	}
 
-	for i = 0; i < rem; i++ {
+	// Create bitmask by setting a bit to 1 for each remaining bit to check.
+	// The mask is built from right-to-left and then shifted to the LHS of the octet.
+	for range rem {
 		mask <<= 1
 		mask += 1
 	}
@@ -76,11 +81,17 @@ func genHashes(ctx context.Context, c Challenge) <-chan Solution {
 			default:
 			}
 
-			sha.Write([]byte(fmt.Sprintf("%s%d", c.Salt, nonce)))
+			sha.Write(fmt.Append(nil, c.Salt, nonce))
 
-			out <- Solution{
+			sol := Solution{
 				Hash:  sha.Sum(nil),
 				Nonce: nonce,
+			}
+			// Ensure we don't hang if out channel is full on ctx close.
+			select {
+			case <-ctx.Done():
+				return
+			case out <- sol:
 			}
 
 			// Reset hasher input for next iteration.
@@ -111,6 +122,7 @@ func Solve(ctx context.Context, c Challenge) (Solution, error) {
 			go func() {
 				hf := genHashes(ctx, c)
 				// Loop until answer has been found.
+				// Should break when hash worker terminates.
 				for h := range hf {
 					if checkZeros(c.Diff, h.Hash) {
 						h.Salt = c.Salt
