@@ -117,6 +117,8 @@ func Solve(ctx context.Context, c Challenge) (Solution, error) {
 	sol := make(chan Solution, 1)
 
 	go func() {
+		// A reasonable hardware-based job limiter.
+		// Use 1 worker per thread at most.
 		threads := runtime.NumCPU()
 		for i := 0; i < threads; i++ {
 			go func() {
