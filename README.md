@@ -4,6 +4,8 @@
 
 A fast KiwiFlare solver lib.
 
+For example usage, see this simple wrapper I made, [phoenix](https://github.com/y-a-t-s/phoenix).
+
 <hr>
 
 Donations are always appreciated but never expected nor required:
